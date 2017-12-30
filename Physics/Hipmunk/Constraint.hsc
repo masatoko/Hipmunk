@@ -52,6 +52,8 @@ module Physics.Hipmunk.Constraint
     where
 
 import Foreign
+import Linear.V2 (perp)
+import Linear.Metric (normalize)
 #include "wrapper.h"
 
 import Physics.Hipmunk.Common

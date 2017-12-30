@@ -66,6 +66,8 @@ module Physics.Hipmunk.Body
 
 import Data.StateVar
 import Foreign hiding (rotate, new)
+import Linear.Vector ((^*))
+import Linear.V2 (crossZ)
 #include "wrapper.h"
 
 import Physics.Hipmunk.Common
@@ -133,7 +135,7 @@ position (B b) = makeStateVar getter setter
       setter = withForeignPtr b . flip #{poke cpBody, p}
 
 
-type Velocity = Vector
+type Velocity = Vector'
 
 velocity :: Body -> StateVar Velocity
 velocity (B b) = makeStateVar getter setter
@@ -150,7 +152,7 @@ maxVelocity (B b) = makeStateVar getter setter
 
 
 
-type Force = Vector
+type Force = Vector'
 
 force :: Body -> StateVar Force
 force (B b) = makeStateVar getter setter
@@ -195,7 +197,7 @@ slew :: Body -> Position -> Time -> IO ()
 slew (B b) newpos dt = do
   withForeignPtr b $ \ptr -> do
     p <- #{peek cpBody, p} ptr
-    #{poke cpBody, v} ptr $ (newpos - p) `scale` (recip dt)
+    #{poke cpBody, v} ptr $ (newpos - p) ^* (recip dt)
 
 
 -- | @updateVelocity b gravity damping dt@ redefines body @b@'s
@@ -205,7 +207,7 @@ slew (B b) newpos dt = do
 --
 --   Note that this function only needs to be called if you
 --   are not adding the body to a space.
-updateVelocity :: Body -> Vector -> Damping -> Time -> IO ()
+updateVelocity :: Body -> Vector' -> Damping -> Time -> IO ()
 updateVelocity (B b) g d dt =
   withForeignPtr b $ \b_ptr ->
   with g $ \g_ptr -> do
@@ -242,7 +244,7 @@ resetForces b = do
 --
 --   Note that the force is accumulated in the body, so you
 --   may need to call 'applyOnlyForce'.
-applyForce :: Body -> Vector -> Position -> IO ()
+applyForce :: Body -> Vector' -> Position -> IO ()
 applyForce (B b) f p =
   withForeignPtr b $ \b_ptr ->
   with f $ \f_ptr ->
@@ -257,15 +259,15 @@ foreign import ccall unsafe "wrapper.h"
 --   but calling 'resetForces' before. Note that using this
 --   function is preferable as it is optimized over this common
 --   case.
-applyOnlyForce :: Body -> Vector -> Position -> IO ()
+applyOnlyForce :: Body -> Vector' -> Position -> IO ()
 applyOnlyForce b f p = do
   force  b $= f
-  torque b $= p `cross` f
+  torque b $= p `crossZ` f
 
 
 -- | @applyImpulse b j r@ applies to the body @b@ the impulse
 --   @j@ with offset @r@, both vectors in world coordinates.
-applyImpulse :: Body -> Vector -> Position -> IO ()
+applyImpulse :: Body -> Vector' -> Position -> IO ()
 applyImpulse (B b) j r =
   withForeignPtr b $ \b_ptr ->
   with j $ \j_ptr ->

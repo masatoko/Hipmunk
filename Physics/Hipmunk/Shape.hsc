@@ -68,6 +68,9 @@ import Data.List (foldl', sortBy)
 import Data.StateVar
 import Foreign hiding (rotate, new)
 import Foreign.C
+import Linear.V2
+import Linear.Vector ((^*))
+import Linear.Metric (dot, norm)
 #include "wrapper.h"
 
 import Physics.Hipmunk.Common
@@ -231,7 +234,7 @@ friction (S shape _) = makeStateVar getter setter
 --   conveyor belts and players that move around. This
 --   value is only used when calculating friction, not
 --   collision. (default is zero)
-type SurfaceVel = Vector
+type SurfaceVel = Vector'
 surfaceVel :: Shape -> StateVar SurfaceVel
 surfaceVel (S shape _) = makeStateVar getter setter
     where
@@ -264,8 +267,8 @@ momentForCircle m (ri,ro) off = (m/2)*(ri*ri + ro*ro) + m*(off `dot` off)
 --   segment of mass @m@ going from point @p1@ to point @p2@.
 momentForSegment :: Mass -> Position -> Position -> Moment
 momentForSegment m p1 p2 =
-    let len' = len (p2 - p1)
-        offset = scale (p1 + p2) (recip 2)
+    let len' = norm (p2 - p1)
+        offset = (p1 + p2) ^* (recip 2)
     in m * len' * len' / 12  +  m * offset `dot` offset
 -- We recoded the C function to avoid FFI and unsafePerformIO
 -- on this simple function.
@@ -285,7 +288,7 @@ momentForPoly m verts off = (m*sum1)/(6*sum2)
     calc a b c | a `seq` b `seq` c `seq` False = undefined
     calc []           acc1 acc2 = (acc1, acc2)
     calc ((v1,v2):vs) acc1 acc2 =
-      let a = v2 `cross` v1
+      let a = v2 `crossZ` v1
           b = v1 `dot` v1 + v1 `dot` v2 + v2 `dot` v2
       in calc vs (acc1 + a*b) (acc2 + a)
 -- We recoded the C function to avoid FFI, unsafePerformIO
@@ -315,7 +318,7 @@ foreign import ccall unsafe "wrapper.h"
 --   1@ indicates that one of the intersections is at point @p1 +
 --   (p2 - p1) \`scale\` t@ with normal @n@.
 shapeSegmentQuery :: Shape -> Position -> Position
-                  -> IO (Maybe (CpFloat, Vector))
+                  -> IO (Maybe (CpFloat, Vector'))
 shapeSegmentQuery (S shape _) p1 p2 =
     withForeignPtr shape $ \shape_ptr ->
     with p1 $ \p1_ptr ->
@@ -357,7 +360,7 @@ type Segment = (Position, Position)
 -- | /O(n)/. @isClockwise verts@ is @True@ iff @verts@ form
 --   a clockwise polygon.
 isClockwise :: [Position] -> Bool
-isClockwise = (<= 0) . foldl' (+) 0 . pairs cross
+isClockwise = (<= 0) . foldl' (+) 0 . pairs crossZ
 
 -- | @isLeft (p1,p2) vert@ is
 --
@@ -367,12 +370,12 @@ isClockwise = (<= 0) . foldl' (+) 0 . pairs cross
 --
 --    * @GT@ otherwise.
 isLeft :: (Position, Position) -> Position -> Ordering
-isLeft (p1,p2) vert = compare 0 $ (p1 - vert) `cross` (p2 - vert)
+isLeft (p1,p2) vert = compare 0 $ (p1 - vert) `crossZ` (p2 - vert)
 
 -- | /O(n)/. @isConvex verts@ is @True@ iff @vers@ form a convex
 --   polygon.
 isConvex :: [Position] -> Bool
-isConvex = foldl1 (==) . map (0 <) . filter (0 /=) . pairs cross . pairs (-)
+isConvex = foldl1 (==) . map (0 <) . filter (0 /=) . pairs crossZ . pairs (-)
 -- From http://apocalisp.wordpress.com/category/programming/haskell/page/2/
 
 -- | /O(1)/. @intersects seg1 seg2@ is the intersection between
@@ -380,16 +383,16 @@ isConvex = foldl1 (==) . map (0 <) . filter (0 /=) . pairs cross . pairs (-)
 intersects :: Segment -> Segment -> Intersection
 intersects (a0,a1) (b0,b1) =
     let u                = a1 - a0
-        v@(Vector vx vy) = b1 - b0
-        w@(Vector wx wy) = a0 - b0
-        d = u `cross` v
+        v@(V2 vx vy) = b1 - b0
+        w@(V2 wx wy) = a0 - b0
+        d = u `crossZ` v
         parallel = d .==. 0
 
         -- Parallel case
-        collinear = all (.==. 0) [u `cross` w, v `cross` w]
+        collinear = all (.==. 0) [u `crossZ` w, v `crossZ` w]
         a_is_point = u `dot` u .==. 0
         b_is_point = v `dot` v .==. 0
-        (Vector w2x w2y) = a1 - b0
+        (V2 w2x w2y) = a1 - b0
         (a_in_b, a_in_b') = if vx .==. 0
                              then swap (wy/vy, w2y/vy)
                              else swap (wx/vx, w2x/vx)
@@ -397,8 +400,8 @@ intersects (a0,a1) (b0,b1) =
                                | otherwise = (y,x)
 
         -- Non-parallel case
-        sI = v `cross` w / d
-        tI = u `cross` w / d
+        sI = v `crossZ` w / d
+        tI = u `crossZ` w / d
 
         -- Auxiliary functions
         inSegment p (c0,c1)
@@ -406,7 +409,7 @@ intersects (a0,a1) (b0,b1) =
             | otherwise = test (gx p) (gx c0, gx c1)
             where
               vertical = gx c0 .==. gx c1
-              (gx, gy) = (\(Vector x _) -> x, \(Vector _ y) -> y)
+              (gx, gy) = (\(V2 x _) -> x, \(V2 _ y) -> y)
               test q (d0,d1) = any (inside q) [(d0,d1), (d1,d0)]
         inside n (l,r) = l <= n && n <= r
 
@@ -424,12 +427,12 @@ intersects (a0,a1) (b0,b1) =
                    (_, i0, i1)
                        | i0 .==. i1 -> IntPoint p0
                        | otherwise  -> IntSegmt (p0,p1)
-                       where p0 = b0 + v `scale` i0
-                             p1 = b0 + v `scale` i1
+                       where p0 = b0 + v ^* i0
+                             p1 = b0 + v ^* i1
 
              (_, True, True) ->
                  -- Both are points
-                 if len (b0-a0) .==. 0
+                 if norm (b0-a0) .==. 0
                  then IntPoint a0 else IntNowhere
 
              _ ->
@@ -441,7 +444,7 @@ intersects (a0,a1) (b0,b1) =
                     then IntPoint point else IntNowhere
 
        else if all (\x -> inside x (0,1)) [sI, tI]
-            then IntPoint (a0 + u `scale` sI) else IntNowhere
+            then IntPoint (a0 + u ^* sI) else IntNowhere
 
 -- | A possible intersection between two segments.
 data Intersection = IntNowhere         -- ^ Don't intercept.
@@ -460,14 +463,14 @@ data Intersection = IntNowhere         -- ^ Don't intercept.
 polyReduce :: Distance -> [Position] -> [Position]
 polyReduce delta = go
     where
-      go (p1:p2:ps) | len (p2-p1) < delta = go (p1:ps)
-                    | otherwise           = p1 : go (p2:ps)
+      go (p1:p2:ps) | norm (p2-p1) < delta = go (p1:ps)
+                    | otherwise            = p1 : go (p2:ps)
       go other = other
 
 -- | /O(n)/. @polyCenter verts@ is the position in the center
 --   of the polygon formed by @verts@.
 polyCenter :: [Position] -> Position
-polyCenter verts = foldl' (+) 0 verts `scale` s
+polyCenter verts = foldl' (+) 0 verts ^* s
     where s = recip $ toEnum $ length verts
 
 
@@ -510,4 +513,3 @@ takeMinimum (x:xs) = go x [] xs
       go min_ acc (y:ys) | y < min_  = go y (min_:acc) ys
                          | otherwise = go min_ (y:acc) ys
       go min_ acc [] = (min_, acc)
-

@@ -282,7 +282,7 @@ elasticIterations (P sp _ _) = makeStateVar getter setter
       setter = withForeignPtr sp . flip #{poke cpSpace, elasticIterations}
 
 -- | The gravity applied to the system. (default is 0)
-type Gravity = Vector
+type Gravity = Vector'
 gravity :: Space -> StateVar Gravity
 gravity (P sp _ _) = makeStateVar getter setter
     where
